@@ -1,0 +1,4 @@
+groq>=0.37.0
+python-dotenv>=1.0.0
+colorama>=0.4.6
+requests>=2.31.0
