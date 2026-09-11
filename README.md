@@ -27,6 +27,7 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 
 ---
@@ -36,7 +37,7 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 - **Tools are described in the prompt.** Each tool's JSON signature (name, docstring, parameter types) is placed inside `<tools></tools>` tags in the system prompt.
 - **The model answers with XML tags.** It replies with `<tool_call>`, `<thought>` and `<response>` blocks that are parsed with a regular expression. No native function-calling API is needed, so the approach works with any chat model that follows instructions.
 - **Arguments are validated before execution.** Values chosen by the model are cast to the types declared in the function's annotations (for example `"5"` → `5`) before the tool runs.
-- **Observations are fed back.** Tool results go back to the model as *observations*, so it can produce a grounded final answer or decide on the next action.
+- **Observations are fed back.** Tool results go back to the model as *observations*, so it can produce a grounded final answer or decide on the next action. A failed tool call becomes an `Error: ...` observation instead of crashing the agent.
 
 ---
 
@@ -45,11 +46,12 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 ```
 agentic-patterns-from-scratch/
 ├── agent_part1/
-│   ├── agent_pattern_utils.py   # Shared helpers: prompts, chat history, @tool decorator, tag parsing
+│   ├── agent_pattern_utils.py   # Shared helpers: prompts, chat history, @tool decorator, tool execution, tag parsing
 │   ├── agent01.py               # Pattern 1: Tool Use agent (Hacker News tool)
 │   └── agent02.py               # Pattern 2: ReAct agent (arithmetic / logarithm tools)
 ├── .env.example                 # Template for your Groq API key (copy to .env)
 ├── .gitignore
+├── LICENSE
 ├── requirements.txt
 └── README.md
 ```
@@ -72,7 +74,7 @@ sequenceDiagram
     A->>A: parse tags, validate argument types
     A->>T: tool.run(**arguments)
     T-->>A: result
-    A->>L: user_msg + "Observation: {id: result}"
+    A->>L: answer-only system prompt + user_msg + observation
     L-->>A: final answer
     A-->>U: final answer
 ```
@@ -80,7 +82,7 @@ sequenceDiagram
 1. The agent sends the user's message along with a system prompt listing every tool signature.
 2. If the model decides a tool is needed, it replies with one or more `<tool_call>{"name": ..., "arguments": ..., "id": ...}</tool_call>` blocks.
 3. Each call is parsed, its arguments are type-checked, and the matching Python function is executed.
-4. A second LLM call receives the original question plus the tool results (the *observation*) and writes the final, grounded answer. If no tool was needed, it simply answers the question.
+4. A second LLM call writes the final, grounded answer. It receives the original question and the tool results (the *observation*), under a short system prompt that asks for a plain-text answer with no further tool calls. If no tool was needed, it simply answers the question.
 
 ### 2. ReAct agent (`agent02.py`)
 
@@ -99,7 +101,7 @@ The ReAct agent keeps a running chat history and repeats up to `max_rounds` (def
 
 1. **Thought**: the model reasons about what to do next (`<thought>...</thought>`).
 2. **Action**: it calls one or more tools (`<tool_call>...</tool_call>`).
-3. **Observation**: the agent runs the tools and appends the results as `<observation>...</observation>`.
+3. **Observation**: the agent runs the tools and appends the results as `<observation>...</observation>`. If a call fails (for example the model names a tool that doesn't exist), the error is appended instead, and the model can correct itself in the next round.
 4. When the model has enough information, it replies with `<response>...</response>`, which ends the loop.
 
 For the demo question *"sum 1234 and 5678, multiply by 5, then take the logarithm"*, the model chains **three** tools: `sum_two_elements` → `multiply_two_elements` → `compute_log`.
@@ -113,15 +115,16 @@ For the demo question *"sum 1234 and 5678, multiply by 5, then take the logarith
 | Name | Kind | Purpose |
 |------|------|---------|
 | `DEFAULT_MODEL`, `resolve_model(model)` | constant, function | Chooses the model: an explicit argument, else the `GROQ_MODEL` env var, else `openai/gpt-oss-120b`. |
-| `completions_create(client, messages, model, max_retries=2)` | function | Calls the Groq chat-completions endpoint and returns the text. Retries when the model returns an empty message. |
+| `completions_create(client, messages, model, max_retries=2)` | function | Calls the Groq chat-completions endpoint and returns the text. Retries when the model returns an empty message or Groq rejects the reply with `tool_use_failed`. |
 | `build_prompt_structure(prompt, role, tag="")` | function | Builds a `{"role": ..., "content": ...}` message, optionally wrapping the content in `<tag></tag>`. |
 | `update_chat_history(history, msg, role)` | function | Appends a new message to a chat history. |
 | `ChatHistory` | class (`list`) | Chat history with an optional maximum length. Drops the oldest message when full. |
 | `FixedFirstChatHistory` | class | Like `ChatHistory`, but always keeps the first (system) message. |
+| `validate_arguments(tool_call, tool_signature)` | function | Casts model-supplied arguments to the annotated `int`, `str`, `bool` or `float` type. The strings `"true"`/`"false"` become booleans, and other annotation types are passed through unchanged. Argument names the tool doesn't have raise an error. |
+| `run_tool_calls(tool_calls_content, tools_dict)` | function | Parses each `<tool_call>` JSON, validates the arguments, runs the tool and returns `{call_id: result}`. Invalid JSON, an unknown tool, bad arguments or an exception inside the tool becomes an `"Error: ..."` result instead of crashing the agent. |
 | `Tool` | class | Wraps a function with its name and JSON signature. `run(**kwargs)` executes it. |
 | `get_fn_signature(fn)` | function | Builds the tool schema from the function's name, docstring and type annotations. |
 | `@tool` | decorator | Turns a plain function into a `Tool` instance. |
-| `validate_arguments(tool_call, tool_signature)` | function | Casts model-supplied arguments to the annotated types (`int`, `str`, `bool`, `float`). |
 | `extract_tag_content(text, tag)` → `TagContentResult` | function, dataclass | Extracts every `<tag>...</tag>` block from a model response (`content: list[str]`, `found: bool`). |
 | `fancy_print`, `fancy_step_tracker` | functions | Coloured console banners (kept for the upcoming part 2 patterns). |
 
@@ -142,7 +145,7 @@ For example, the `@tool` decorator turns `fetch_top_hacker_news_stories` into th
 | `ToolAgent(tools, model=None)` | Creates a Groq client and registers one tool or a list of tools. |
 | `TOOL_SYSTEM_PROMPT` | Instructs the model to emit `<tool_call>` JSON for any function it wants to use. |
 | `add_tool_signatures()` | Concatenates all tool signatures to fill the `<tools></tools>` block. |
-| `process_tool_calls(tool_calls_content)` | Parses each tool-call JSON, validates the arguments, runs the tool and returns `{call_id: result}`. |
+| `process_tool_calls(tool_calls_content)` | Executes the parsed tool calls with `run_tool_calls` and returns `{call_id: result}`. |
 | `run(user_msg)` | First LLM call decides on tool usage. Tools are executed. Second LLM call writes the final answer from the observation. |
 | `fetch_top_hacker_news_stories(top_n: int)` | Tool that queries the [Hacker News Firebase API](https://github.com/HackerNews/API) and returns a JSON list of `{title, url}`. Network errors are returned as `{"error": ...}`. |
 
@@ -154,7 +157,7 @@ Running the script asks two questions: one that needs no tool (*"Tell me your na
 |--------|-------------|
 | `ReactAgent(tools, model=None, system_prompt="")` | Creates the agent. `system_prompt` is an optional persona or backstory placed before the ReAct instructions. |
 | `REACT_SYSTEM_PROMPT` | Explains the Thought → Action → Observation loop, the tag format and an example session. |
-| `process_tool_calls(tool_calls_content)` | Same as in `ToolAgent`: parse, validate, execute and collect the observations. |
+| `process_tool_calls(tool_calls_content)` | Same as in `ToolAgent`: executes the calls with `run_tool_calls` and collects the observations. |
 | `run(user_msg, max_rounds=10)` | Runs the ReAct loop until a `<response>` tag appears or `max_rounds` is reached. |
 | `sum_two_elements(a: int, b: int)` | Tool: returns `a + b`. |
 | `multiply_two_elements(a: int, b: int)` | Tool: returns `a * b`. |
@@ -166,7 +169,7 @@ Running the script asks two questions: one that needs no tool (*"Tell me your na
 
 ### Prerequisites
 
-- **Python 3.10+** (tested on Python 3.12)
+- **Python 3.10+** (tested on Python 3.12 and 3.13)
 - A free **Groq API key** from <https://console.groq.com/keys>
 - Internet access (for the Groq API; `agent01.py` also calls the public Hacker News API)
 
@@ -233,7 +236,7 @@ python agent02.py
 
 You can also run them from the repository root, for example `python agent_part1/agent01.py`.
 
-**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = final answer.
+**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = final answer, red = a failed tool call.
 
 ### Optional: use a different model
 
@@ -348,7 +351,7 @@ print(agent.run("What is (12 + 30) * 3?"))
 
 Tips:
 
-- Use `int`, `str`, `bool` or `float` annotations. These are the types `validate_arguments` knows how to cast.
+- Prefer `int`, `str`, `bool` or `float` annotations. These are the types `validate_arguments` casts. Other types (such as `list`) work, but the value is passed to the tool exactly as the model sent it.
 - Return a string or a JSON-serialisable value so the observation reads well in the prompt.
 - Keep the docstring short and specific. It is the model's only description of the tool.
 
@@ -363,7 +366,7 @@ Tips:
 | `model` | `ToolAgent(...)`, `ReactAgent(...)` | `None` → `resolve_model()` | Per-agent model override. |
 | `system_prompt` | `ReactAgent(...)` | `""` | Persona or backstory placed before the ReAct instructions. |
 | `max_rounds` | `ReactAgent.run(...)` | `10` | Maximum Thought → Action → Observation iterations. |
-| `max_retries` | `completions_create(...)` | `2` | Extra attempts when the model returns an empty message. |
+| `max_retries` | `completions_create(...)` | `2` | Extra attempts when the model returns an empty message or a `tool_use_failed` error. |
 
 ---
 
@@ -385,6 +388,8 @@ The first commits in this repository contain the code exactly as provided in the
    - Observations are now wrapped in `<observation>` tags, as the system prompt describes.
    - The demo now prints the final answer.
 5. **Tool docstrings added.** They become the tool descriptions the model reads.
+6. **Robust tool execution.** A single bad tool call used to crash either agent. This happened with malformed JSON, an unknown tool name, a missing `id`, an unexpected argument or an uncastable value. Both agents now share `run_tool_calls`, which turns these failures into `Error: ...` observations. `validate_arguments` also no longer treats the string `"false"` as `True`, and no longer crashes on tools with `list` or `dict` parameters.
+7. **Unicode-safe console output.** Printing an answer that contained characters such as a narrow no-break space (common in `gpt-oss` output) crashed with `UnicodeEncodeError` when output was redirected or piped on Windows. Characters the console can't encode are now replaced instead.
 
 ---
 
@@ -397,16 +402,16 @@ The first commits in this repository contain the code exactly as provided in the
 | `400 tool_use_failed: Tool choice is none, but model called a tool` | The model tried native function calling, or its own built-in tools, instead of the XML tag format. `openai/gpt-oss-20b` does this consistently. | `completions_create` already retries this twice. If it persists, use `openai/gpt-oss-120b` (the default). |
 | `429 rate_limit_exceeded` | You hit the free-tier token or request limits. | Wait a minute or switch to a model with higher limits. |
 | `ModuleNotFoundError: agent_pattern_utils` | You imported the agents from another folder. | Run the scripts by path (`python agent_part1/agent01.py`) or from inside `agent_part1/`. |
+| Red `Tool call failed: Error: ...` lines | The model produced an invalid tool call. | Usually harmless: `ReactAgent` sees the error and tries again. If it happens constantly, check your tool's name, parameters and docstring. |
 | The final answer ignores the tool result | LLM output is non-deterministic. | Re-run the script, or use `ReactAgent`, which checks observations inside its loop. |
 
 ---
 
 ## Limitations
 
-- `ToolAgent` performs a single round of tool calls. For multi-step problems, use `ReactAgent`.
+- `ToolAgent` performs a single round of tool calls. If a call fails, the model can only report the error. For multi-step problems, or to retry failed calls, use `ReactAgent`.
 - Parsing depends on the model following the XML-tag format, and small models may not comply reliably.
-- `validate_arguments` only supports the `int`, `str`, `bool` and `float` types.
-- If the model names a tool that doesn't exist, a `KeyError` is raised.
+- Only `int`, `str`, `bool` and `float` arguments are type-cast. Other types are passed to the tool as the model sent them.
 
 ---
 
@@ -416,9 +421,15 @@ The first commits in this repository contain the code exactly as provided in the
 
 ---
 
+## License
+
+Released under the [MIT License](LICENSE). Portions of the code are derived from The Neural Maze's [agentic-patterns-course](https://github.com/neural-maze/agentic-patterns-course), Copyright (c) 2024 The Neural Maze, also under the MIT License.
+
+---
+
 ## Acknowledgements
 
 - Built as part of the *Agents* module (Week 8) of a Generative AI course.
-- The code structure follows The Neural Maze's [agentic-patterns-course](https://github.com/neural-maze/agentic-patterns-course) (MIT License), which implements the four agentic design patterns (Reflection, Tool Use, Planning and Multi-agent) from scratch.
+- The code structure follows The Neural Maze's [agentic-patterns-course](https://github.com/neural-maze/agentic-patterns-course), which implements the four agentic design patterns (Reflection, Tool Use, Planning and Multi-agent) from scratch.
 - Hacker News data comes from the official [Hacker News API](https://github.com/HackerNews/API).
 - LLM inference is provided by [Groq](https://groq.com).
