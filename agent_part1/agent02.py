@@ -1,5 +1,3 @@
-import json
-
 from colorama import Fore, Style
 from dotenv import load_dotenv
 from groq import Groq
@@ -59,22 +57,7 @@ class ReactAgent:
         return "".join([tool.fn_signature for tool in self.tools])
 
     def process_tool_calls(self, tool_calls_content: list) -> dict:
-        observations = {}
-        for tool_call_str in tool_calls_content:
-            tool_call = json.loads(tool_call_str)
-            tool_name = tool_call["name"]
-            tool = self.tools_dict[tool_name]
-
-            print(Fore.GREEN + f"\nUsing Tool: {tool_name}")
-            validated_tool_call = validate_arguments(
-                tool_call, json.loads(tool.fn_signature)
-            )
-            print(Fore.GREEN + f"\nTool call dict: \n{validated_tool_call}")
-            result = tool.run(**validated_tool_call["arguments"])
-            print(Fore.GREEN + f"\nTool result: \n{result}")
-            observations[validated_tool_call["id"]] = result
-
-        return observations
+        return run_tool_calls(tool_calls_content, self.tools_dict)
 
     def run( self, user_msg: str, max_rounds: int = 10) -> str:
         user_prompt = build_prompt_structure(

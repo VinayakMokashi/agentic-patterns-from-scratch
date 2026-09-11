@@ -82,12 +82,52 @@ def validate_arguments(tool_call: dict, tool_signature: dict) -> dict:
     }
 
     for arg_name, arg_value in tool_call["arguments"].items():
-        expected_type = properties[arg_name].get("type")
+        if arg_name not in properties:
+            raise ValueError(f"Unexpected argument '{arg_name}'. Expected arguments: {list(properties)}")
+        expected_type = type_mapping.get(properties[arg_name].get("type"))
 
-        if not isinstance(arg_value, type_mapping[expected_type]):
-            tool_call["arguments"][arg_name] = type_mapping[expected_type](arg_value)
+        # Only cast the simple types above; anything else (list, dict, ...) is passed through as is
+        if expected_type is None or isinstance(arg_value, expected_type):
+            continue
+        if expected_type is bool and isinstance(arg_value, str):
+            tool_call["arguments"][arg_name] = arg_value.strip().lower() in ("true", "1", "yes")
+        else:
+            tool_call["arguments"][arg_name] = expected_type(arg_value)
 
     return tool_call
+
+
+def run_tool_calls(tool_calls_content: list, tools_dict: dict) -> dict:
+    # Bad tool calls (invalid JSON, unknown tool, wrong arguments, a failing tool) are reported
+    # back to the model as observations instead of crashing the agent, so it can correct itself.
+    observations = {}
+    for index, tool_call_str in enumerate(tool_calls_content):
+        call_id = index
+        try:
+            tool_call = json.loads(tool_call_str)
+            call_id = tool_call.get("id", index)
+            tool_call.setdefault("arguments", {})
+            tool_name = tool_call.get("name")
+            if tool_name not in tools_dict:
+                raise ValueError(f"Unknown tool '{tool_name}'. Available tools: {list(tools_dict)}")
+            tool = tools_dict[tool_name]
+
+            print(Fore.GREEN + f"\nUsing Tool: {tool_name}")
+
+            validated_tool_call = validate_arguments(
+                tool_call, json.loads(tool.fn_signature)
+            )
+            print(Fore.GREEN + f"\nTool call dict: \n{validated_tool_call}")
+
+            result = tool.run(**validated_tool_call["arguments"])
+            print(Fore.GREEN + f"\nTool result: \n{result}")
+        except Exception as e:
+            result = f"Error: {e}"
+            print(Fore.RED + f"\nTool call failed: {result}")
+
+        observations[call_id] = result
+
+    return observations
 
 
 class Tool:
