@@ -8,6 +8,7 @@ import time
 from colorama import Fore
 from colorama import Style
 from colorama import just_fix_windows_console
+from groq import BadRequestError
 
 just_fix_windows_console()
 
@@ -21,9 +22,15 @@ def resolve_model(model: str | None = None) -> str:
 
 
 def completions_create(client, messages: list, model: str, max_retries: int = 2) -> str:
-    # Reasoning models occasionally return an empty message, so retry before giving up.
-    for _ in range(max_retries + 1):
-        response = client.chat.completions.create(messages=messages, model=model)
+    # Reasoning models occasionally return an empty message or attempt a native tool call
+    # (which Groq rejects with "tool_use_failed"), so retry those cases before giving up.
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(messages=messages, model=model)
+        except BadRequestError as e:
+            if "tool_use_failed" not in str(e) or attempt == max_retries:
+                raise
+            continue
         content = response.choices[0].message.content
         if content:
             return str(content)
