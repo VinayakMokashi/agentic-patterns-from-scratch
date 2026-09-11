@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Callable
 import re
 from dataclasses import dataclass
@@ -6,11 +7,27 @@ import time
 
 from colorama import Fore
 from colorama import Style
+from colorama import just_fix_windows_console
+
+just_fix_windows_console()
+
+# The original course model (llama-3.3-70b-versatile) has been decommissioned on Groq.
+# Set GROQ_MODEL (e.g. in .env) to use a different model.
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
-def completions_create(client, messages: list, model: str) -> str:
-    response = client.chat.completions.create(messages=messages, model=model)
-    return str(response.choices[0].message.content)
+def resolve_model(model: str | None = None) -> str:
+    return model or os.getenv("GROQ_MODEL") or DEFAULT_MODEL
+
+
+def completions_create(client, messages: list, model: str, max_retries: int = 2) -> str:
+    # Reasoning models occasionally return an empty message, so retry before giving up.
+    for _ in range(max_retries + 1):
+        response = client.chat.completions.create(messages=messages, model=model)
+        content = response.choices[0].message.content
+        if content:
+            return str(content)
+    return ""
 
 
 def build_prompt_structure(prompt: str, role: str, tag: str = "") -> dict:
