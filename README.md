@@ -378,7 +378,7 @@ The first commits in this repository contain the code exactly as provided in the
 2. **Unreliable replies from reasoning models.** `completions_create` now retries when the model returns an empty message. It also retries when Groq rejects a reply with `tool_use_failed` because the model tried to use its own built-in tools.
 3. **`agent01.py`**
    - `openai/gpt-oss-120b` often wrote the `<tool_call>` block inside its hidden reasoning and left the visible reply empty, so the tool never ran. The tool prompt now asks for the tags in the reply text and forbids native function calling.
-   - The observation message had a stray nested f-string, so the model received the literal text `f"Observation: ..."`.
+   - The observation message had a stray nested f-string, so the model received the literal text `f"Observation: ..."`. The message now also lists the tool calls that produced the results, so the model knows where the data came from.
    - The final-answer call now has a short system message. It says that observations are real tool results, and that the answer must be plain text with no tool calls. Without it, the model sometimes claimed it "cannot access live data" or tried to browse on its own.
    - The demo now prints both responses. Previously it printed nothing.
    - HTTP requests have a timeout, and network errors are returned to the model as JSON.
