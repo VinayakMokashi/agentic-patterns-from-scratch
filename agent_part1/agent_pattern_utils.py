@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from typing import Callable
 import re
 from dataclasses import dataclass
@@ -9,6 +10,11 @@ from colorama import Fore
 from colorama import Style
 from colorama import just_fix_windows_console
 from groq import BadRequestError
+
+# Replace characters the console can't encode (e.g. when output is redirected on Windows) instead of crashing
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
 
 just_fix_windows_console()
 
