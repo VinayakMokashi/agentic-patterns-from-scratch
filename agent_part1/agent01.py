@@ -74,7 +74,9 @@ class ToolAgent:
             observations = self.process_tool_calls(tool_calls.content)
             update_chat_history(
                 agent_chat_history,
-                f"Observation (results of the tools run for this request): {observations}\n"
+                "Observation (results of the tools run for this request):\n"
+                f"Tool calls: {tool_calls.content}\n"
+                f"Results by call id: {observations}\n"
                 "Use this observation to answer the request.",
                 "user",
             )
