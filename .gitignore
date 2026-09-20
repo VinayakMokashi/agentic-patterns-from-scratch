@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Output written by agent_part2/agent04.py
+poem_hindi.txt
+
 # Virtual environments
 .venv/
 venv/

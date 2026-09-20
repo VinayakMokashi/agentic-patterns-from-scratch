@@ -2,14 +2,16 @@
 
 Build LLM agents **without any agent framework**: just Python, the [Groq](https://groq.com) chat-completions API and a few well-structured prompts.
 
-This repository implements two foundational agentic design patterns:
+This repository implements the four foundational agentic design patterns:
 
 | # | Pattern | Script | What it demonstrates |
 |---|---------|--------|----------------------|
 | 1 | **Tool Use** | [`agent_part1/agent01.py`](agent_part1/agent01.py) | The LLM decides when to call a Python function (the live Hacker News API) and uses the result to answer. |
 | 2 | **ReAct** (Reason + Act) | [`agent_part1/agent02.py`](agent_part1/agent02.py) | The LLM loops *Thought → Action → Observation*, chaining several tool calls to solve a multi-step problem. |
+| 3 | **Reflection** | [`agent_part2/agent03.py`](agent_part2/agent03.py) | Two prompts — a generator and a critic — pass work back and forth until the critic is satisfied. |
+| 4 | **Multi-Agent** | [`agent_part2/agent04.py`](agent_part2/agent04.py) | A crew of ReAct agents wired into a dependency graph, run in topological order, each passing its output on as the next one's context. |
 
-Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_pattern_utils.py), that turns any type-annotated Python function into an LLM-callable tool with a single `@tool` decorator.
+All four agents share a single toolkit, [`agent_pattern_utils.py`](agent_part1/agent_pattern_utils.py), that turns any type-annotated Python function into an LLM-callable tool with a single `@tool` decorator.
 
 ---
 
@@ -26,7 +28,6 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 - [Changes from the reference implementation](#changes-from-the-reference-implementation)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
-- [Roadmap](#roadmap)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
@@ -38,6 +39,9 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 - **The model answers with XML tags.** It replies with `<tool_call>`, `<thought>` and `<response>` blocks that are parsed with a regular expression. No native function-calling API is needed, so the approach works with any chat model that follows instructions.
 - **Arguments are validated before execution.** Values chosen by the model are cast to the types declared in the function's annotations (for example `"5"` → `5`) before the tool runs.
 - **Observations are fed back.** Tool results go back to the model as *observations*, so it can produce a grounded final answer or decide on the next action. A failed tool call becomes an `Error: ...` observation instead of crashing the agent.
+- **Roles are just system prompts.** The Reflection agent's "generator" and "critic" are the same model with two different system prompts and two separate chat histories. Nothing else distinguishes them.
+- **Agreement is expressed as text.** A model cannot return a boolean, so the critic signals "nothing left to fix" by emitting the literal token `<OK>`, which the loop watches for.
+- **Collaboration happens through context.** Agents in a crew share no memory. When one finishes, its output is handed to its dependents and appears in their prompt inside a `<context></context>` block.
 
 ---
 
@@ -49,6 +53,9 @@ agentic-patterns-from-scratch/
 │   ├── agent_pattern_utils.py   # Shared helpers: prompts, chat history, @tool decorator, tool execution, tag parsing
 │   ├── agent01.py               # Pattern 1: Tool Use agent (Hacker News tool)
 │   └── agent02.py               # Pattern 2: ReAct agent (arithmetic / logarithm tools)
+├── agent_part2/
+│   ├── agent03.py               # Pattern 3: Reflection agent (generate -> critique -> revise)
+│   └── agent04.py               # Pattern 4: Multi-agent crew (poem -> translation -> file)
 ├── .env.example                 # Template for your Groq API key (copy to .env)
 ├── .gitignore
 ├── LICENSE
@@ -106,6 +113,43 @@ The ReAct agent keeps a running chat history and repeats up to `max_rounds` (def
 
 For the demo question *"sum 1234 and 5678, multiply by 5, then take the logarithm"*, the model chains **three** tools: `sum_two_elements` → `multiply_two_elements` → `compute_log`.
 
+### 3. Reflection agent (`agent03.py`)
+
+```mermaid
+flowchart TD
+    U[User request] --> G[Generation history: generator system prompt + request]
+    G --> D[LLM writes a draft]
+    D --> RH[Append the draft to the reflection history as a user message]
+    RH --> C[LLM critiques the draft]
+    C -->|contains OK| F[Stop: the current draft is final]
+    C -->|otherwise| B[Append the critique to the generation history as a user message]
+    B --> D
+    D -->|n_steps reached| F
+```
+
+Two chat histories are kept side by side, and the roles are inverted between them: the draft is an `assistant` message in the generator's history, but arrives as a `user` message in the critic's history, because to the critic it is the thing under review. The critique travels back the other way.
+
+Both histories are capped (`total_length=3`) and pin their system prompt in place, so the model only ever sees its instructions plus the most recent draft-and-critique exchange. The loop ends when the critique contains `<OK>`, or after `n_steps` rounds.
+
+### 4. Multi-agent crew (`agent04.py`)
+
+```mermaid
+flowchart LR
+    subgraph Crew
+        A1[Poet Agent] -->|poem as context| A2[Poem Translator Agent]
+        A2 -->|Hindi poem as context| A3[Writer Agent]
+    end
+    A3 -->|write_str_to_txt tool| F[poem_hindi.txt]
+```
+
+Each crew member is a full `ReactAgent` with its own backstory, task and optional tools. Members declare their dependencies with the `>>` and `<<` operators, which build a directed acyclic graph. `Crew.run()` then:
+
+1. **Topologically sorts** the agents, so nobody runs before its dependencies have finished (a cycle raises an error, because it admits no valid order).
+2. Runs each agent in that order, building its prompt from the task description, the expected output format and whatever context it has received.
+3. Hands each result to that agent's dependents as context.
+
+Only the last agent has a tool. That is deliberate: the first two produce text, and the tool is what turns text into an actual file on disk.
+
 ---
 
 ## Code description
@@ -126,7 +170,7 @@ For the demo question *"sum 1234 and 5678, multiply by 5, then take the logarith
 | `get_fn_signature(fn)` | function | Builds the tool schema from the function's name, docstring and type annotations. |
 | `@tool` | decorator | Turns a plain function into a `Tool` instance. |
 | `extract_tag_content(text, tag)` → `TagContentResult` | function, dataclass | Extracts every `<tag>...</tag>` block from a model response (`content: list[str]`, `found: bool`). |
-| `fancy_print`, `fancy_step_tracker` | functions | Coloured console banners (kept for the upcoming part 2 patterns). |
+| `fancy_print`, `fancy_step_tracker` | functions | Coloured console banners. `fancy_print` announces each agent in `agent04.py`. |
 
 For example, the `@tool` decorator turns `fetch_top_hacker_news_stories` into this signature, which is what the model sees:
 
@@ -162,6 +206,36 @@ Running the script asks two questions: one that needs no tool (*"Tell me your na
 | `sum_two_elements(a: int, b: int)` | Tool: returns `a + b`. |
 | `multiply_two_elements(a: int, b: int)` | Tool: returns `a * b`. |
 | `compute_log(x: int)` | Tool: natural logarithm of `x`, with a friendly message for `x <= 0`. |
+
+### `agent03.py`: Reflection agent
+
+| Member | Description |
+|--------|-------------|
+| `ReflectionAgent(model=None)` | Creates a Groq client. Holds the two base system prompts. |
+| `BASE_GENERATION_SYSTEM_PROMPT` | Tells the generator to always output revised content when given a critique. |
+| `BASE_REFLECTION_SYSTEM_PROMPT` | Tells the critic to list recommendations, or to output `<OK>` when nothing needs changing. |
+| `generate(generation_history, verbose)` | One generation call, logged in blue. |
+| `reflect(reflection_history, verbose)` | One critique call, logged in green. |
+| `run(user_msg, generation_system_prompt="", reflection_system_prompt="", n_steps=10, verbose=0)` | Runs the loop and returns `(final_content, last_step_index)`. The two prompt arguments are personas, prepended to the base prompts above. |
+
+The demo asks for a Merge Sort implementation, with the generator told it is a Python programmer and the critic told it is an experienced computer scientist.
+
+### `agent04.py`: Multi-agent crew
+
+| Member | Description |
+|--------|-------------|
+| `Agent(name, backstory, task_description, task_expected_output="", tools=None, llm=None)` | A crew member. Wraps a `ReactAgent` whose system prompt is the backstory, and registers itself with the active `Crew`. |
+| `Agent.__rshift__` / `__lshift__` (`>>`, `<<`) | Declares dependencies, so a pipeline reads as `a >> b >> c`. Accepts a single agent or a list. |
+| `Agent.receive_context(input_data)` | Appends an upstream agent's output to this agent's context. |
+| `Agent.create_prompt()` | Builds the prompt from `<task_description>`, `<task_expected_output>` and `<context>` blocks. |
+| `Agent.run()` | Runs the ReAct agent on that prompt, then passes the result to every dependent. |
+| `Crew()` | Context manager. While the `with` block is open, every `Agent` created registers itself automatically. |
+| `Crew.topological_sort()` | Orders agents so each runs after its dependencies. Raises `ValueError` on a circular dependency. |
+| `Crew.plot()` | Returns a `graphviz.Digraph` of the dependency graph. Needs the optional `graphviz` package; not called by the demo. |
+| `Crew.run()` | Sorts the crew, then runs each agent in order, printing a banner for each. |
+| `write_str_to_txt(string_data: str, txt_filename: str)` | Tool: writes text to a UTF-8 file and returns a short confirmation. |
+
+The demo builds a three-agent pipeline — a poet, a Hindi translator and a writer — and produces `poem_hindi.txt` in the working directory.
 
 ---
 
@@ -224,19 +298,43 @@ GROQ_API_KEY=your_groq_api_key_here
 
 ### 5. Run the agents
 
-```bash
-cd agent_part1
+Run any script by path from the repository root:
 
+```bash
 # Pattern 1: Tool Use agent
-python agent01.py
+python agent_part1/agent01.py
 
 # Pattern 2: ReAct agent
-python agent02.py
+python agent_part1/agent02.py
+
+# Pattern 3: Reflection agent
+python agent_part2/agent03.py
+
+# Pattern 4: Multi-agent crew
+python agent_part2/agent04.py
 ```
 
-You can also run them from the repository root, for example `python agent_part1/agent01.py`.
+Or from inside either folder:
 
-**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = final answer, red = a failed tool call.
+```bash
+cd agent_part2
+python agent03.py
+```
+
+The part 2 scripts add `agent_part1/` to `sys.path` themselves, so they find the shared toolkit and `ReactAgent` from either location. No installation step and no `PYTHONPATH` are needed.
+
+**What each demo does:**
+
+| Script | Runs | Output |
+|--------|------|--------|
+| `agent01.py` | Two questions, one needing the Hacker News tool | Printed answers |
+| `agent02.py` | One multi-step arithmetic question | A Thought → Action → Observation transcript |
+| `agent03.py` | Up to 10 generate → critique rounds on a Merge Sort request | The final code, printed |
+| `agent04.py` | A three-agent pipeline: poem → Hindi translation → file | `poem_hindi.txt` in the working directory |
+
+`agent03.py` and `agent04.py` make several model calls each, so they take longer than part 1 and use more of your quota. `agent03.py` stops early as soon as the critic answers `<OK>`; lower `n_steps` in the demo block to cap it further.
+
+**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = final answer, red = a failed tool call. In `agent03.py`, blue = the generated draft and green = the critique.
 
 ### Optional: use a different model
 
@@ -367,6 +465,10 @@ Tips:
 | `system_prompt` | `ReactAgent(...)` | `""` | Persona or backstory placed before the ReAct instructions. |
 | `max_rounds` | `ReactAgent.run(...)` | `10` | Maximum Thought → Action → Observation iterations. |
 | `max_retries` | `completions_create(...)` | `2` | Extra attempts when the model returns an empty message or a `tool_use_failed` error. |
+| `model` | `ReflectionAgent(...)` | `None` → `resolve_model()` | Per-agent model override. |
+| `n_steps` | `ReflectionAgent.run(...)` | `10` | Maximum generate → critique rounds. The loop also stops early on `<OK>`. |
+| `verbose` | `ReflectionAgent.run(...)` | `0` | `1` prints every draft and critique as they are produced. |
+| `llm` | `Agent(...)` in `agent04.py` | `None` → `resolve_model()` | Per-crew-member model override. |
 
 ---
 
@@ -390,6 +492,12 @@ The first commits in this repository contain the reference implementation as it 
 5. **Tool docstrings added.** They become the tool descriptions the model reads.
 6. **Robust tool execution.** A single bad tool call used to crash either agent. This happened with malformed JSON, an unknown tool name, a missing `id`, an unexpected argument or an uncastable value. Both agents now share `run_tool_calls`, which turns these failures into `Error: ...` observations. `validate_arguments` also no longer treats the string `"false"` as `True`, and no longer crashes on tools with `list` or `dict` parameters.
 7. **Unicode-safe console output.** Printing an answer that contained characters such as a narrow no-break space (common in `gpt-oss` output) crashed with `UnicodeEncodeError` when output was redirected or piped on Windows. Characters the console can't encode are now replaced instead.
+8. **One shared toolkit instead of two.** Part 2 shipped its own older copy of `agent_pattern_utils.py`, which defined nothing part 1's did not and was missing every fix above — the retry logic, `resolve_model`, `run_tool_calls`, the argument-validation hardening and the Unicode fix. The duplicate is gone; both part 2 scripts now add `agent_part1/` to `sys.path` and import the single shared toolkit.
+9. **`agent04.py`**
+   - It imported `ReactAgent` from `agent_pattern_react`, a module that does not exist anywhere in the reference code, so the script could not start. It now imports `ReactAgent` from `agent02.py`.
+   - `graphviz` was a hard import, but it is only needed by `Crew.plot()` — and the demo called `plot()` and discarded the result without rendering anything. The import is now lazy, so the crew runs without the package installed, and the demo no longer calls `plot()`.
+   - `write_str_to_txt` returned `None`, so the model's observation was literally `{0: None}` rather than a result. It now returns a short confirmation, and has a docstring for the model to read.
+   - The output file was named `poem_hindi_june_1.txt`; it is now `poem_hindi.txt`.
 
 ---
 
@@ -401,7 +509,9 @@ The first commits in this repository contain the reference implementation as it 
 | `404 model_not_found` | The model was decommissioned. | Set `GROQ_MODEL` to a model listed at <https://console.groq.com/docs/models>. |
 | `400 tool_use_failed: Tool choice is none, but model called a tool` | The model tried native function calling, or its own built-in tools, instead of the XML tag format. `openai/gpt-oss-20b` does this consistently. | `completions_create` already retries this twice. If it persists, use `openai/gpt-oss-120b` (the default). |
 | `429 rate_limit_exceeded` | You hit the free-tier token or request limits. | Wait a minute or switch to a model with higher limits. |
-| `ModuleNotFoundError: agent_pattern_utils` | You imported the agents from another folder. | Run the scripts by path (`python agent_part1/agent01.py`) or from inside `agent_part1/`. |
+| `ModuleNotFoundError: agent_pattern_utils` | You imported the agents from another folder. | Run the scripts by path (`python agent_part1/agent01.py`) or from inside their own folder. The part 2 scripts add `agent_part1/` to `sys.path` themselves. |
+| `ModuleNotFoundError: graphviz` when calling `Crew.plot()` | `plot()` is the only optional feature. | `pip install graphviz`, and install the [Graphviz system binaries](https://graphviz.org/download/). Everything else runs without it. |
+| `agent04.py` stops partway with `429` | The crew makes several calls in quick succession and can exceed the free tier's tokens-per-minute limit. | Wait a minute and re-run, or set `GROQ_MODEL` to a model with higher limits. |
 | Red `Tool call failed: Error: ...` lines | The model produced an invalid tool call. | Usually harmless: `ReactAgent` sees the error and tries again. If it happens constantly, check your tool's name, parameters and docstring. |
 | The final answer ignores the tool result | LLM output is non-deterministic. | Re-run the script, or use `ReactAgent`, which checks observations inside its loop. |
 
@@ -412,12 +522,9 @@ The first commits in this repository contain the reference implementation as it 
 - `ToolAgent` performs a single round of tool calls. If a call fails, the model can only report the error. For multi-step problems, or to retry failed calls, use `ReactAgent`.
 - Parsing depends on the model following the XML-tag format, and small models may not comply reliably.
 - Only `int`, `str`, `bool` and `float` arguments are type-cast. Other types are passed to the tool as the model sent them.
-
----
-
-## Roadmap
-
-- **Part 2** (coming soon): the **Reflection** pattern (a generate → critique → revise loop) and a **multi-agent crew** with dependency-ordered execution.
+- The Reflection agent stops when the critic *says* it is satisfied. A critic that never emits `<OK>` will run the full `n_steps`, and one that emits it too readily will stop after a single round.
+- Both reflection histories keep only the latest draft-and-critique exchange, which keeps the context small but means the agent cannot look back at earlier revisions.
+- A crew is a one-shot pipeline: each agent runs exactly once, in dependency order. There is no looping, no branching and no way for a later agent to send work back upstream.
 
 ---
 

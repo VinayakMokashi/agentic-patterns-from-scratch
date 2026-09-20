@@ -2,3 +2,7 @@ groq>=0.37.0
 python-dotenv>=1.0.0
 colorama>=0.4.6
 requests>=2.31.0
+
+# Optional: only needed for Crew.plot() in agent_part2/agent04.py.
+# Also requires the Graphviz system binaries: https://graphviz.org/download/
+# graphviz>=0.20.0
