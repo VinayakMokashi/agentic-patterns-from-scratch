@@ -3,7 +3,7 @@ import sys
 from textwrap import dedent
 from collections import deque
 
-from colorama import Fore
+from colorama import Fore, Style
 from dotenv import load_dotenv
 
 # The shared toolkit and the ReAct agent live in agent_part1; add it to the import path so
@@ -75,6 +75,8 @@ class Agent:
             raise TypeError("The dependent must be an instance or list of Agent.")
 
     def receive_context(self, input_data):
+        if self.context:
+            self.context += "\n\n"
         self.context += f"{self.name} received context: \n{input_data}"
 
     def create_prompt(self):
@@ -175,7 +177,7 @@ class Crew:
         sorted_agents = self.topological_sort()
         for agent in sorted_agents:
             fancy_print(f"RUNNING AGENT: {agent}")
-            print(Fore.RED + f"{agent.run()}")
+            print(Fore.YELLOW + f"{agent.run()}" + Style.RESET_ALL)
 
 
 @tool
@@ -190,8 +192,6 @@ def write_str_to_txt(string_data: str, txt_filename: str):
 
 
 if __name__ == "__main__":
-
-
     with Crew() as crew:
         agent_1 = Agent(
             name="Poet Agent",
@@ -203,7 +203,7 @@ if __name__ == "__main__":
         agent_2 = Agent(
             name="Poem Translator Agent",
             backstory="You are an expert translator especially skilled in Hindi",
-            task_description="Translate a poem into Hindi", 
+            task_description="Translate a poem into Hindi",
             task_expected_output="Just output the translated poem and nothing else"
         )
 

@@ -334,7 +334,7 @@ The part 2 scripts add `agent_part1/` to `sys.path` themselves, so they find the
 
 `agent03.py` and `agent04.py` make several model calls each, so they take longer than part 1 and use more of your quota. `agent03.py` stops early as soon as the critic answers `<OK>`; lower `n_steps` in the demo block to cap it further.
 
-**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = final answer, red = a failed tool call. In `agent03.py`, blue = the generated draft and green = the critique.
+**Colour legend in the console:** green = tool usage, magenta = the model's thought, blue = observations, yellow = a final answer (including each crew member's result in `agent04.py`), red = a failed tool call. `agent03.py` reuses two of these for its own loop: blue = the generated draft, green = the critique, and red marks the line announcing that the critic answered `<OK>`.
 
 ### Optional: use a different model
 
@@ -497,7 +497,10 @@ The first commits in this repository contain the reference implementation as it 
    - It imported `ReactAgent` from `agent_pattern_react`, a module that does not exist anywhere in the reference code, so the script could not start. It now imports `ReactAgent` from `agent02.py`.
    - `graphviz` was a hard import, but it is only needed by `Crew.plot()` — and the demo called `plot()` and discarded the result without rendering anything. The import is now lazy, so the crew runs without the package installed, and the demo no longer calls `plot()`.
    - `write_str_to_txt` returned `None`, so the model's observation was literally `{0: None}` rather than a result. It now returns a short confirmation, and has a docstring for the model to read.
-   - The output file was named `poem_hindi_june_1.txt`; it is now `poem_hindi.txt`.
+   - `Crew.run()` printed every agent's result in red, which the shared toolkit uses for a *failed* tool call. Results are now yellow, the colour the rest of the repo uses for a final answer.
+   - `receive_context` concatenated an agent's contexts with no separator, so an agent with two dependencies received them run together. They are now separated by a blank line.
+10. **Console colour is reset.** Part 1 ends each coloured print with `Style.RESET_ALL`, but the part 2 scripts did not, leaving the terminal coloured after the script exited.
+11. **`ReflectionAgent.run` signatures.** It was annotated `-> str` but returns `(content, step)`, and with `n_steps <= 0` it raised `UnboundLocalError` instead of returning.
 
 ---
 
@@ -525,6 +528,7 @@ The first commits in this repository contain the reference implementation as it 
 - The Reflection agent stops when the critic *says* it is satisfied. A critic that never emits `<OK>` will run the full `n_steps`, and one that emits it too readily will stop after a single round.
 - Both reflection histories keep only the latest draft-and-critique exchange, which keeps the context small but means the agent cannot look back at earlier revisions.
 - A crew is a one-shot pipeline: each agent runs exactly once, in dependency order. There is no looping, no branching and no way for a later agent to send work back upstream.
+- Every crew member is a `ReactAgent`, even one with no tools. A tool-less member still gets the full Thought → Action → Observation prompt, and only returns early if the model wraps its answer in `<response>` tags. When it does not, the loop runs all `max_rounds` iterations before returning, which is slow and uses far more of your token quota than the task needs. The Poet and Translator agents in the demo are both tool-less, and are the slowest part of the run.
 
 ---
 

@@ -1,7 +1,7 @@
 import os
 import sys
 
-from colorama import Fore
+from colorama import Fore, Style
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -10,12 +10,12 @@ from groq import Groq
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_part1"))
 
 from agent_pattern_utils import (  # noqa: E402
+    FixedFirstChatHistory,
     build_prompt_structure,
     completions_create,
     resolve_model,
     update_chat_history,
 )
-from agent_pattern_utils import FixedFirstChatHistory  # noqa: E402
 
 load_dotenv()
 
@@ -40,7 +40,7 @@ class ReflectionAgent:
         output = completions_create(self.client, history, self.model)
 
         if verbose > 0:
-            print(log_color, f"\n\n{log_title}\n\n", output)
+            print(log_color, f"\n\n{log_title}\n\n", output, Style.RESET_ALL)
 
         return output
 
@@ -54,7 +54,7 @@ class ReflectionAgent:
             reflection_history, verbose, log_title="REFLECTION", log_color=Fore.GREEN
         )
 
-    def run( self, user_msg: str, generation_system_prompt: str = "", reflection_system_prompt: str = "", n_steps: int = 10, verbose: int = 0,) -> str:
+    def run( self, user_msg: str, generation_system_prompt: str = "", reflection_system_prompt: str = "", n_steps: int = 10, verbose: int = 0,) -> tuple[str, int]:
         generation_system_prompt += self.BASE_GENERATION_SYSTEM_PROMPT
         reflection_system_prompt += self.BASE_REFLECTION_SYSTEM_PROMPT
 
@@ -71,6 +71,8 @@ class ReflectionAgent:
             total_length=3,
         )
 
+        generation, step = "", -1
+
         for step in range(n_steps):
             generation = self.generate(generation_history, verbose=verbose)
             update_chat_history(generation_history, generation, "assistant")
@@ -82,6 +84,7 @@ class ReflectionAgent:
                 print(
                     Fore.RED,
                     "\n\nStop Sequence found. Stopping the reflection loop ... \n\n",
+                    Style.RESET_ALL,
                 )
                 break
 
