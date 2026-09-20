@@ -23,7 +23,7 @@ Both agents share a small toolkit, [`agent_pattern_utils.py`](agent_part1/agent_
 - [Sample output](#sample-output)
 - [Build your own tools](#build-your-own-tools)
 - [Configuration reference](#configuration-reference)
-- [Changes from the original course code](#changes-from-the-original-course-code)
+- [Changes from the reference implementation](#changes-from-the-reference-implementation)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
@@ -370,9 +370,9 @@ Tips:
 
 ---
 
-## Changes from the original course code
+## Changes from the reference implementation
 
-The first commits in this repository contain the code exactly as provided in the course. The commits that follow fix problems found while testing it:
+The first commits in this repository contain the reference implementation as it was originally written. The commits that follow fix problems found while testing it:
 
 1. **Decommissioned model.** `llama-3.3-70b-versatile` no longer exists on Groq (`404 model_not_found`). The default is now `openai/gpt-oss-120b`, and you can override it with `GROQ_MODEL`.
 2. **Unreliable replies from reasoning models.** `completions_create` now retries when the model returns an empty message. It also retries when Groq rejects a reply with `tool_use_failed` because the model tried to use its own built-in tools.
@@ -429,7 +429,6 @@ Released under the [MIT License](LICENSE). Portions of the code are derived from
 
 ## Acknowledgements
 
-- Built as part of the *Agents* module (Week 8) of a Generative AI course.
 - The code structure follows The Neural Maze's [agentic-patterns-course](https://github.com/neural-maze/agentic-patterns-course), which implements the four agentic design patterns (Reflection, Tool Use, Planning and Multi-agent) from scratch.
 - Hacker News data comes from the official [Hacker News API](https://github.com/HackerNews/API).
 - LLM inference is provided by [Groq](https://groq.com).

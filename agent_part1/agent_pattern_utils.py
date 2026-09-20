@@ -18,7 +18,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 just_fix_windows_console()
 
-# The original course model (llama-3.3-70b-versatile) has been decommissioned on Groq.
+# The original model (llama-3.3-70b-versatile) has been decommissioned on Groq.
 # Set GROQ_MODEL (e.g. in .env) to use a different model.
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
